@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -8,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"go.mongodb.org/mongo-driver/bson"
 )
 
 type logEntry interface {
@@ -380,35 +383,70 @@ func (entry debugChannelRequestLog) eventType() string {
 	return "debug_channel_request"
 }
 
-func (context connContext) logEvent(entry logEntry) {
-	if strings.HasPrefix(entry.eventType(), "debug_") && !context.cfg.Logging.Debug {
+func (sshContext connContext) logEvent(entry logEntry) {
+	if strings.HasPrefix(entry.eventType(), "debug_") && !sshContext.cfg.Logging.Debug {
 		return
 	}
-	if context.cfg.Logging.JSON {
-		var jsonEntry interface{}
-		tcpSource := context.RemoteAddr().(*net.TCPAddr)
-		source := getAddressLog(tcpSource.IP.String(), tcpSource.Port, context.cfg)
-		if context.cfg.Logging.Timestamps {
-			jsonEntry = struct {
-				Time      string      `json:"time"`
-				Source    interface{} `json:"source"`
-				EventType string      `json:"event_type"`
-				Event     logEntry    `json:"event"`
-			}{time.Now().Format(time.RFC3339), source, entry.eventType(), entry}
-		} else {
-			jsonEntry = struct {
-				Source    interface{} `json:"source"`
-				EventType string      `json:"event_type"`
-				Event     logEntry    `json:"event"`
-			}{source, entry.eventType(), entry}
-		}
-		logBytes, err := json.Marshal(jsonEntry)
-		if err != nil {
-			warningLogger.Printf("Failed to log event: %v", err)
-			return
-		}
-		log.Print(string(logBytes))
+
+	if !sshContext.cfg.Logging.JSON && sshContext.cfg.mongoDBHandle.mongoCollection == nil {
+		log.Printf("[%v] %v", sshContext.RemoteAddr().String(), entry)
 	} else {
-		log.Printf("[%v] %v", context.RemoteAddr().String(), entry)
+		var timestamp time.Time = time.Now()
+		tcpSource := sshContext.RemoteAddr().(*net.TCPAddr)
+		source := getAddressLog(tcpSource.IP.String(), tcpSource.Port, sshContext.cfg)
+
+		if sshContext.cfg.Logging.JSON {
+			var jsonEntry interface{}
+			if sshContext.cfg.Logging.Timestamps {
+				jsonEntry = struct {
+					Time      string      `json:"time"`
+					Source    interface{} `json:"source"`
+					EventType string      `json:"event_type"`
+					Event     logEntry    `json:"event"`
+				}{timestamp.Format(time.RFC3339), source, entry.eventType(), entry}
+			} else {
+				jsonEntry = struct {
+					Source    interface{} `json:"source"`
+					EventType string      `json:"event_type"`
+					Event     logEntry    `json:"event"`
+				}{source, entry.eventType(), entry}
+			}
+			logBytes, err := json.Marshal(jsonEntry)
+			if err != nil {
+				warningLogger.Printf("Failed to log event: %v", err)
+				return
+			}
+			if sshContext.cfg.Logging.JSON {
+				log.Print(string(logBytes))
+			}
+		} else {
+			log.Printf("[%v] %v", sshContext.RemoteAddr().String(), entry)
+		}
+
+		if sshContext.cfg.mongoDBHandle.mongoCollection != nil && !strings.HasPrefix(entry.eventType(), "debug_") {
+			// Log to MongoDB, excluding debug logs
+			var bsonEntry bson.M
+			if sshContext.cfg.Logging.Timestamps {
+				bsonEntry = bson.M{
+					"time":       time.Now(),
+					"source":     source,
+					"event_type": entry.eventType(),
+					"event":      entry,
+				}
+			} else {
+				bsonEntry = bson.M{
+					"source":     source,
+					"event_type": entry.eventType(),
+					"event":      entry,
+				}
+			}
+
+			_, err := sshContext.cfg.mongoDBHandle.mongoCollection.InsertOne(context.Background(), bsonEntry)
+			if err != nil {
+				warningLogger.Printf("Failed to log event to MongoDB: %v", err)
+			}
+
+		}
+
 	}
 }

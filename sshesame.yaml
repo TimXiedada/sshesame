@@ -20,6 +20,14 @@ logging:
   # If unspecified or null, activity logs are written to standard out.
   file: null
 
+  mongodb:
+    # The MongoDB connection string, database name and collection to output activity logs to. 
+    # Debug and error logs are still written to standard error.
+    # If connection string is unspecified or null, no database connection will be established.
+    connstring: null
+    database: null
+    collection: null
+
   # Make activity logs JSON-formatted instead of human readable.
   json: false
 
@@ -33,8 +41,9 @@ logging:
   # If unspecified or null, metrics are not served.
   metrics_address: null
 
-  # When logging in JSON, log addresses as objects including the hostname and the port instead of strings.
-  split_host_port: false
+  # When logging in JSON or MongoDB, log addresses as objects including the hostname and the port instead of strings.
+  # I suggest enabling it for easier querying and analysis.
+  split_host_port: true
 
 auth:
   # Allow clients to connect without authenticating.

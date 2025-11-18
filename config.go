@@ -15,6 +15,10 @@ import (
 	"os"
 	"path"
 
+	"context"
+
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 	"golang.org/x/crypto/ssh"
 	"gopkg.in/yaml.v2"
 )
@@ -26,12 +30,19 @@ type serverConfig struct {
 }
 
 type loggingConfig struct {
-	File           string `yaml:"file"`
-	JSON           bool   `yaml:"json"`
-	Timestamps     bool   `yaml:"timestamps"`
-	MetricsAddress string `yaml:"metrics_address"`
-	Debug          bool   `yaml:"debug"`
-	SplitHostPort  bool   `yaml:"split_host_port"`
+	File           string        `yaml:"file"`
+	MongoDB        mongoDBConfig `yaml:"mongodb"`
+	JSON           bool          `yaml:"json"`
+	Timestamps     bool          `yaml:"timestamps"`
+	MetricsAddress string        `yaml:"metrics_address"`
+	Debug          bool          `yaml:"debug"`
+	SplitHostPort  bool          `yaml:"split_host_port"`
+}
+
+type mongoDBConfig struct {
+	ConnString string `yaml:"connstring"`
+	Database   string `yaml:"database"`
+	Collection string `yaml:"collection"`
 }
 
 type commonAuthConfig struct {
@@ -68,14 +79,18 @@ type sshProtoConfig struct {
 }
 
 type config struct {
-	Server   serverConfig   `yaml:"server"`
-	Logging  loggingConfig  `yaml:"logging"`
-	Auth     authConfig     `yaml:"auth"`
-	SSHProto sshProtoConfig `yaml:"ssh_proto"`
-
+	Server         serverConfig   `yaml:"server"`
+	Logging        loggingConfig  `yaml:"logging"`
+	Auth           authConfig     `yaml:"auth"`
+	SSHProto       sshProtoConfig `yaml:"ssh_proto"`
 	parsedHostKeys []ssh.Signer
 	sshConfig      *ssh.ServerConfig
 	logFileHandle  io.WriteCloser
+	mongoDBHandle  struct {
+		mongoClient     *mongo.Client
+		mongoDatabase   *mongo.Database
+		mongoCollection *mongo.Collection
+	}
 }
 
 func (cfg *config) setDefaults() {
@@ -236,6 +251,23 @@ func (cfg *config) setupLogging() error {
 	return nil
 }
 
+func (cfg *config) setupMongoDBLogging() error {
+	if cfg.Logging.MongoDB.ConnString == "" {
+		return nil // No database connection will be established
+	}
+	var err error
+
+	cfg.mongoDBHandle.mongoClient, err = mongo.Connect(context.Background(), options.Client().ApplyURI(cfg.Logging.MongoDB.ConnString))
+	if err != nil {
+		return err
+	}
+	cfg.mongoDBHandle.mongoDatabase = cfg.mongoDBHandle.mongoClient.Database(cfg.Logging.MongoDB.Database)
+
+	cfg.mongoDBHandle.mongoCollection = cfg.mongoDBHandle.mongoDatabase.Collection(cfg.Logging.MongoDB.Collection)
+
+	return nil
+}
+
 func (cfg *config) load(configString string, dataDir string) error {
 	*cfg = config{}
 
@@ -266,6 +298,9 @@ func (cfg *config) load(configString string, dataDir string) error {
 		return err
 	}
 	if err := cfg.setupLogging(); err != nil {
+		return err
+	}
+	if err := cfg.setupMongoDBLogging(); err != nil {
 		return err
 	}
 
