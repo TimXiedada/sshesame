@@ -440,11 +440,14 @@ func (sshContext connContext) logEvent(entry logEntry) {
 					"event":      entry,
 				}
 			}
-
-			_, err := sshContext.cfg.mongoDBHandle.mongoCollection.InsertOne(context.Background(), bsonEntry)
-			if err != nil {
-				warningLogger.Printf("Failed to log event to MongoDB: %v", err)
-			}
+			go func(){
+				_, err := sshContext.cfg.mongoDBHandle.mongoCollection.InsertOne(context.Background(), bsonEntry)
+				if err != nil {
+					warningLogger.Printf("Failed to log event to MongoDB: %v", err)
+				}
+			}()
+			
+			
 
 		}
 
